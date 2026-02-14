@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bunx tsx
 /**
  * Migrate log.jsonl timestamps from milliseconds to Slack format (seconds.microseconds)
  * 

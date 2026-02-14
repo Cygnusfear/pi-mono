@@ -7,8 +7,8 @@ See [AGENTS.md](../../../AGENTS.md) for additional guidelines.
 ```bash
 git clone https://github.com/badlogic/pi-mono
 cd pi-mono
-npm install
-npm run build
+bun install
+bun run build
 ```
 
 Run from source:
@@ -54,8 +54,8 @@ Never use `__dirname` directly for package assets.
 
 ```bash
 ./test.sh                         # Run non-LLM tests (no API keys needed)
-npm test                          # Run all tests
-npm test -- test/specific.test.ts # Run specific test
+bun run test                      # Run all tests
+bun run test -- test/specific.test.ts # Run specific test
 ```
 
 ## Project Structure

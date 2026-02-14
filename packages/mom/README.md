@@ -476,13 +476,13 @@ mom --sandbox=docker:mom-exec ./data-exec
 
 Terminal 1 (root. Watch mode for all packages):
 ```bash
-npm run dev
+bun run dev
 ```
 
 Terminal 2 (mom, with auto-restart):
 ```bash
 cd packages/mom
-npx tsx --watch-path src --watch src/main.ts --sandbox=docker:mom-sandbox ./data
+bunx tsx --watch-path src --watch src/main.ts --sandbox=docker:mom-sandbox ./data
 ```
 
 ## License
