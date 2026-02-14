@@ -1066,9 +1066,39 @@ export class DefaultPackageManager implements PackageManager {
 			return installedVersion !== pinnedVersion;
 		}
 
-		// Unpinned: check registry for latest version
+		// Unpinned: check registry for latest version, but cache to avoid
+		// hitting the network on every startup (~280ms per package)
 		try {
+			const cacheDir = join(this.agentDir, "cache");
+			const cacheFile = join(cacheDir, "npm-version-cache.json");
+			const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+			let cache: Record<string, { version: string; timestamp: number }> = {};
+			try {
+				if (existsSync(cacheFile)) {
+					cache = JSON.parse(readFileSync(cacheFile, "utf-8"));
+				}
+			} catch {
+				// Corrupted cache, ignore
+			}
+
+			const cached = cache[source.name];
+			const now = Date.now();
+			if (cached && now - cached.timestamp < CACHE_TTL_MS) {
+				return cached.version !== installedVersion;
+			}
+
 			const latestVersion = await this.getLatestNpmVersion(source.name);
+
+			// Update cache
+			cache[source.name] = { version: latestVersion, timestamp: now };
+			try {
+				mkdirSync(cacheDir, { recursive: true });
+				writeFileSync(cacheFile, JSON.stringify(cache));
+			} catch {
+				// Non-critical, ignore cache write failures
+			}
+
 			return latestVersion !== installedVersion;
 		} catch {
 			// If we can't check registry, assume it's fine
@@ -1304,9 +1334,62 @@ export class DefaultPackageManager implements PackageManager {
 		if (this.globalNpmRoot) {
 			return this.globalNpmRoot;
 		}
+
+		// Try to resolve without spawning npm (which is slow ~130ms)
+		// npm root -g returns {prefix}/lib/node_modules
+		// We can derive this from npm's prefix config or known locations
+		const cached = this.resolveGlobalNpmRootFast();
+		if (cached) {
+			this.globalNpmRoot = cached;
+			return this.globalNpmRoot;
+		}
+
+		// Fallback to spawning npm
 		const result = this.runCommandSync("npm", ["root", "-g"]);
 		this.globalNpmRoot = result.trim();
 		return this.globalNpmRoot;
+	}
+
+	private resolveGlobalNpmRootFast(): string | null {
+		// Check NPM_CONFIG_PREFIX env var first
+		const envPrefix = process.env.NPM_CONFIG_PREFIX;
+		if (envPrefix) {
+			const candidate = join(envPrefix, "lib", "node_modules");
+			if (existsSync(candidate)) {
+				return candidate;
+			}
+		}
+
+		// On Unix, npm's default global prefix is /usr/local or derived from
+		// the node binary location: {dirname(process.execPath)}/..
+		// The global root is {prefix}/lib/node_modules
+		if (process.platform !== "win32") {
+			// Try common locations
+			const candidates = [
+				// Homebrew (macOS)
+				"/opt/homebrew/lib/node_modules",
+				// Standard Unix
+				"/usr/local/lib/node_modules",
+				// Derived from node binary
+				join(dirname(process.execPath), "..", "lib", "node_modules"),
+			];
+			for (const candidate of candidates) {
+				if (existsSync(candidate)) {
+					return candidate;
+				}
+			}
+		} else {
+			// Windows: npm root -g typically returns %APPDATA%\npm\node_modules
+			const appData = process.env.APPDATA;
+			if (appData) {
+				const candidate = join(appData, "npm", "node_modules");
+				if (existsSync(candidate)) {
+					return candidate;
+				}
+			}
+		}
+
+		return null;
 	}
 
 	private getNpmInstallPath(source: NpmSource, scope: SourceScope): string {

@@ -7,6 +7,18 @@
  */
 process.title = "pi";
 
-import { main } from "./main.js";
+// Fast path: handle --version and --help before importing the full module graph
+const args = process.argv.slice(2);
+if (args.includes("--version") || args.includes("-v")) {
+	const { VERSION } = await import("./config.js");
+	console.log(VERSION);
+	process.exit(0);
+}
+if (args.includes("--help") || args.includes("-h")) {
+	const { printHelp } = await import("./cli/args.js");
+	printHelp();
+	process.exit(0);
+}
 
-main(process.argv.slice(2));
+const { main } = await import("./main.js");
+main(args);
