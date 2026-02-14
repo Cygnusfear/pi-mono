@@ -256,6 +256,15 @@ function createExtensionAPI(
 }
 
 async function loadExtensionModule(extensionPath: string) {
+	// When running under Bun (not compiled binary), use native import() —
+	// Bun handles TypeScript natively, no transpiler needed.
+	// Fall back to jiti for Node.js or compiled Bun binaries.
+	if ("Bun" in globalThis && !isBunBinary) {
+		const module = await import(extensionPath);
+		const factory = (module.default ?? module) as ExtensionFactory;
+		return typeof factory !== "function" ? undefined : factory;
+	}
+
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
 		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
