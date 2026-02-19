@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed viewport tracking desync after terminal height resize: resizing the terminal smaller then back larger caused content to float at the top with empty space below, because `maxLinesRendered` was not reset when only height changed
+
 ## [0.55.1] - 2026-02-26
 
 ### Fixed
