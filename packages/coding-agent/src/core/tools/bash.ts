@@ -65,6 +65,13 @@ const defaultBashOperations: BashOperations = {
 				return;
 			}
 
+			// Build a combined signal: merge caller abort + timeout into one.
+			// When either fires, we kill the process tree and settle immediately.
+			const signals: AbortSignal[] = [];
+			if (signal) signals.push(signal);
+			if (timeout !== undefined && timeout > 0) signals.push(AbortSignal.timeout(timeout * 1000));
+			const combined = signals.length > 0 ? AbortSignal.any(signals) : undefined;
+
 			const child = spawn(shell, [...args, command], {
 				cwd,
 				detached: true,
@@ -72,64 +79,44 @@ const defaultBashOperations: BashOperations = {
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 
-			let timedOut = false;
+			let settled = false;
 
-			// Set timeout if provided
-			let timeoutHandle: NodeJS.Timeout | undefined;
-			if (timeout !== undefined && timeout > 0) {
-				timeoutHandle = setTimeout(() => {
-					timedOut = true;
-					if (child.pid) {
-						killProcessTree(child.pid);
-					}
-				}, timeout * 1000);
+			const kill = () => {
+				if (child.pid) killProcessTree(child.pid);
+			};
+
+			const onAbort = () => {
+				if (settled) return;
+				settled = true;
+				kill();
+				// Distinguish caller-abort from timeout
+				const isTimeout = !signal?.aborted && combined?.aborted;
+				reject(new Error(isTimeout ? `timeout:${timeout}` : "aborted"));
+			};
+
+			if (combined) {
+				if (combined.aborted) {
+					kill();
+					reject(new Error(signal?.aborted ? "aborted" : `timeout:${timeout}`));
+					return;
+				}
+				combined.addEventListener("abort", onAbort, { once: true });
 			}
 
-			// Stream stdout and stderr
-			if (child.stdout) {
-				child.stdout.on("data", onData);
-			}
-			if (child.stderr) {
-				child.stderr.on("data", onData);
-			}
+			if (child.stdout) child.stdout.on("data", onData);
+			if (child.stderr) child.stderr.on("data", onData);
 
-			// Handle shell spawn errors
 			child.on("error", (err) => {
-				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (signal) signal.removeEventListener("abort", onAbort);
+				if (settled) return;
+				settled = true;
+				combined?.removeEventListener("abort", onAbort);
 				reject(err);
 			});
 
-			// Handle abort signal - kill entire process tree
-			const onAbort = () => {
-				if (child.pid) {
-					killProcessTree(child.pid);
-				}
-			};
-
-			if (signal) {
-				if (signal.aborted) {
-					onAbort();
-				} else {
-					signal.addEventListener("abort", onAbort, { once: true });
-				}
-			}
-
-			// Handle process exit
 			child.on("close", (code) => {
-				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (signal) signal.removeEventListener("abort", onAbort);
-
-				if (signal?.aborted) {
-					reject(new Error("aborted"));
-					return;
-				}
-
-				if (timedOut) {
-					reject(new Error(`timeout:${timeout}`));
-					return;
-				}
-
+				if (settled) return;
+				settled = true;
+				combined?.removeEventListener("abort", onAbort);
 				resolve({ exitCode: code });
 			});
 		});

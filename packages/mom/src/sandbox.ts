@@ -107,6 +107,17 @@ class HostExecutor implements Executor {
 			const shell = process.platform === "win32" ? "cmd" : "sh";
 			const shellArgs = process.platform === "win32" ? ["/c"] : ["-c"];
 
+			// Merge caller signal + timeout into one combined signal
+			const signals: AbortSignal[] = [];
+			if (options?.signal) signals.push(options.signal);
+			if (options?.timeout && options.timeout > 0) signals.push(AbortSignal.timeout(options.timeout * 1000));
+			const combined = signals.length > 0 ? AbortSignal.any(signals) : undefined;
+
+			if (combined?.aborted) {
+				reject(new Error("Command aborted"));
+				return;
+			}
+
 			const child = spawn(shell, [...shellArgs, command], {
 				detached: true,
 				stdio: ["ignore", "pipe", "pipe"],
@@ -114,26 +125,22 @@ class HostExecutor implements Executor {
 
 			let stdout = "";
 			let stderr = "";
-			let timedOut = false;
-
-			const timeoutHandle =
-				options?.timeout && options.timeout > 0
-					? setTimeout(() => {
-							timedOut = true;
-							killProcessTree(child.pid!);
-						}, options.timeout * 1000)
-					: undefined;
+			let settled = false;
 
 			const onAbort = () => {
+				if (settled) return;
+				settled = true;
 				if (child.pid) killProcessTree(child.pid);
+				// Distinguish caller-abort from timeout
+				const isTimeout = !options?.signal?.aborted && combined?.aborted;
+				const msg = isTimeout
+					? `${stdout}\n${stderr}\nCommand timed out after ${options?.timeout} seconds`.trim()
+					: `${stdout}\n${stderr}\nCommand aborted`.trim();
+				reject(new Error(msg));
 			};
 
-			if (options?.signal) {
-				if (options.signal.aborted) {
-					onAbort();
-				} else {
-					options.signal.addEventListener("abort", onAbort, { once: true });
-				}
+			if (combined) {
+				combined.addEventListener("abort", onAbort, { once: true });
 			}
 
 			child.stdout?.on("data", (data) => {
@@ -151,21 +158,9 @@ class HostExecutor implements Executor {
 			});
 
 			child.on("close", (code) => {
-				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (options?.signal) {
-					options.signal.removeEventListener("abort", onAbort);
-				}
-
-				if (options?.signal?.aborted) {
-					reject(new Error(`${stdout}\n${stderr}\nCommand aborted`.trim()));
-					return;
-				}
-
-				if (timedOut) {
-					reject(new Error(`${stdout}\n${stderr}\nCommand timed out after ${options?.timeout} seconds`.trim()));
-					return;
-				}
-
+				if (settled) return;
+				settled = true;
+				combined?.removeEventListener("abort", onAbort);
 				resolve({ stdout, stderr, code: code ?? 0 });
 			});
 		});

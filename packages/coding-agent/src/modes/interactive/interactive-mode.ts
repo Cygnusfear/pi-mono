@@ -90,6 +90,7 @@ import { appKey, appKeyHint, editorKey, keyHint, rawKeyHint } from "./components
 import { LoginDialogComponent } from "./components/login-dialog.js";
 import { ModelSelectorComponent } from "./components/model-selector.js";
 import { OAuthSelectorComponent } from "./components/oauth-selector.js";
+import { ResourceListingComponent } from "./components/resource-listing.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
@@ -885,17 +886,19 @@ export class InteractiveMode {
 		const themesResult = this.session.resourceLoader.getThemes();
 
 		if (showListing) {
+			const sections: { header: string; content: string }[] = [];
+			const counts = { skills: 0, prompts: 0, extensions: 0, themes: 0 };
+
 			const contextFiles = this.session.resourceLoader.getAgentsFiles().agentsFiles;
 			if (contextFiles.length > 0) {
-				this.chatContainer.addChild(new Spacer(1));
 				const contextList = contextFiles
 					.map((f) => theme.fg("dim", `  ${this.formatDisplayPath(f.path)}`))
 					.join("\n");
-				this.chatContainer.addChild(new Text(`${sectionHeader("Context")}\n${contextList}`, 0, 0));
-				this.chatContainer.addChild(new Spacer(1));
+				sections.push({ header: "Context", content: `${sectionHeader("Context")}\n${contextList}` });
 			}
 
 			const skills = skillsResult.skills;
+			counts.skills = skills.length;
 			if (skills.length > 0) {
 				const skillPaths = skills.map((s) => s.filePath);
 				const groups = this.buildScopeGroups(skillPaths, metadata);
@@ -903,11 +906,11 @@ export class InteractiveMode {
 					formatPath: (p) => this.formatDisplayPath(p),
 					formatPackagePath: (p, source) => this.getShortPath(p, source),
 				});
-				this.chatContainer.addChild(new Text(`${sectionHeader("Skills")}\n${skillList}`, 0, 0));
-				this.chatContainer.addChild(new Spacer(1));
+				sections.push({ header: "Skills", content: `${sectionHeader("Skills")}\n${skillList}` });
 			}
 
 			const templates = this.session.promptTemplates;
+			counts.prompts = templates.length;
 			if (templates.length > 0) {
 				const templatePaths = templates.map((t) => t.filePath);
 				const groups = this.buildScopeGroups(templatePaths, metadata);
@@ -922,24 +925,27 @@ export class InteractiveMode {
 						return template ? `/${template.name}` : this.formatDisplayPath(p);
 					},
 				});
-				this.chatContainer.addChild(new Text(`${sectionHeader("Prompts")}\n${templateList}`, 0, 0));
-				this.chatContainer.addChild(new Spacer(1));
+				sections.push({ header: "Prompts", content: `${sectionHeader("Prompts")}\n${templateList}` });
 			}
 
 			const extensionPaths = options?.extensionPaths ?? [];
+			counts.extensions = extensionPaths.length;
 			if (extensionPaths.length > 0) {
 				const groups = this.buildScopeGroups(extensionPaths, metadata);
 				const extList = this.formatScopeGroups(groups, {
 					formatPath: (p) => this.formatDisplayPath(p),
 					formatPackagePath: (p, source) => this.getShortPath(p, source),
 				});
-				this.chatContainer.addChild(new Text(`${sectionHeader("Extensions", "mdHeading")}\n${extList}`, 0, 0));
-				this.chatContainer.addChild(new Spacer(1));
+				sections.push({
+					header: "Extensions",
+					content: `${sectionHeader("Extensions", "mdHeading")}\n${extList}`,
+				});
 			}
 
 			// Show loaded themes (excluding built-in)
 			const loadedThemes = themesResult.themes;
 			const customThemes = loadedThemes.filter((t) => t.sourcePath);
+			counts.themes = customThemes.length;
 			if (customThemes.length > 0) {
 				const themePaths = customThemes.map((t) => t.sourcePath!);
 				const groups = this.buildScopeGroups(themePaths, metadata);
@@ -947,8 +953,13 @@ export class InteractiveMode {
 					formatPath: (p) => this.formatDisplayPath(p),
 					formatPackagePath: (p, source) => this.getShortPath(p, source),
 				});
-				this.chatContainer.addChild(new Text(`${sectionHeader("Themes")}\n${themeList}`, 0, 0));
-				this.chatContainer.addChild(new Spacer(1));
+				sections.push({ header: "Themes", content: `${sectionHeader("Themes")}\n${themeList}` });
+			}
+
+			if (sections.length > 0) {
+				const listing = new ResourceListingComponent(sections, counts);
+				listing.setExpanded(this.toolOutputExpanded);
+				this.chatContainer.addChild(listing);
 			}
 		}
 
@@ -1784,7 +1795,7 @@ export class InteractiveMode {
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
-			if (this.loadingAnimation) {
+			if (this.loadingAnimation || this.session.isStreaming) {
 				this.restoreQueuedMessagesToEditor({ abort: true });
 			} else if (this.session.isBashRunning) {
 				this.session.abortBash();
@@ -2562,6 +2573,14 @@ export class InteractiveMode {
 		const now = Date.now();
 		if (now - this.lastSigintTime < 500) {
 			void this.shutdown();
+		} else if (this.loadingAnimation || this.session.isStreaming) {
+			// Agent is streaming - abort it (same as Escape during streaming)
+			this.restoreQueuedMessagesToEditor({ abort: true });
+			this.lastSigintTime = now;
+		} else if (this.session.isBashRunning) {
+			// Bash command running - abort it (same as Escape during bash)
+			this.session.abortBash();
+			this.lastSigintTime = now;
 		} else {
 			this.clearEditor();
 			this.lastSigintTime = now;

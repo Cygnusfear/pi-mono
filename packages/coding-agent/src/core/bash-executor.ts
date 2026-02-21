@@ -61,6 +61,14 @@ export interface BashResult {
 export function executeBash(command: string, options?: BashExecutorOptions): Promise<BashResult> {
 	return new Promise((resolve, reject) => {
 		const { shell, args } = getShellConfig();
+		const signal = options?.signal;
+
+		// If already aborted, don't even spawn
+		if (signal?.aborted) {
+			resolve({ output: "", exitCode: undefined, cancelled: true, truncated: false });
+			return;
+		}
+
 		const child: ChildProcess = spawn(shell, [...args, command], {
 			detached: true,
 			env: getShellEnv(),
@@ -77,26 +85,33 @@ export function executeBash(command: string, options?: BashExecutorOptions): Pro
 		let tempFileStream: WriteStream | undefined;
 		let totalBytes = 0;
 
-		// Handle abort signal
-		const abortHandler = () => {
-			if (child.pid) {
-				killProcessTree(child.pid);
-			}
+		let settled = false;
+
+		const finalize = () => {
+			if (tempFileStream) tempFileStream.end();
+			const fullOutput = outputChunks.join("");
+			const truncationResult = truncateTail(fullOutput);
+			return { fullOutput, truncationResult };
 		};
 
-		if (options?.signal) {
-			if (options.signal.aborted) {
-				// Already aborted, don't even start
-				child.kill();
-				resolve({
-					output: "",
-					exitCode: undefined,
-					cancelled: true,
-					truncated: false,
-				});
-				return;
-			}
-			options.signal.addEventListener("abort", abortHandler, { once: true });
+		// Abort handler — kill process tree and resolve immediately
+		const onAbort = () => {
+			if (settled) return;
+			settled = true;
+			signal?.removeEventListener("abort", onAbort);
+			if (child.pid) killProcessTree(child.pid);
+			const { fullOutput, truncationResult } = finalize();
+			resolve({
+				output: truncationResult.truncated ? truncationResult.content : fullOutput,
+				exitCode: undefined,
+				cancelled: true,
+				truncated: truncationResult.truncated,
+				fullOutputPath: tempFilePath,
+			});
+		};
+
+		if (signal) {
+			signal.addEventListener("abort", onAbort, { once: true });
 		}
 
 		const decoder = new TextDecoder();
@@ -112,7 +127,6 @@ export function executeBash(command: string, options?: BashExecutorOptions): Pro
 				const id = randomBytes(8).toString("hex");
 				tempFilePath = join(tmpdir(), `pi-bash-${id}.log`);
 				tempFileStream = createWriteStream(tempFilePath);
-				// Write already-buffered chunks to temp file
 				for (const chunk of outputChunks) {
 					tempFileStream.write(chunk);
 				}
@@ -130,7 +144,6 @@ export function executeBash(command: string, options?: BashExecutorOptions): Pro
 				outputBytes -= removed.length;
 			}
 
-			// Stream to callback if provided
 			if (options?.onChunk) {
 				options.onChunk(text);
 			}
@@ -140,22 +153,11 @@ export function executeBash(command: string, options?: BashExecutorOptions): Pro
 		child.stderr?.on("data", handleData);
 
 		child.on("close", (code) => {
-			// Clean up abort listener
-			if (options?.signal) {
-				options.signal.removeEventListener("abort", abortHandler);
-			}
-
-			if (tempFileStream) {
-				tempFileStream.end();
-			}
-
-			// Combine buffered chunks for truncation (already sanitized)
-			const fullOutput = outputChunks.join("");
-			const truncationResult = truncateTail(fullOutput);
-
-			// code === null means killed (cancelled)
+			if (settled) return;
+			settled = true;
+			signal?.removeEventListener("abort", onAbort);
+			const { fullOutput, truncationResult } = finalize();
 			const cancelled = code === null;
-
 			resolve({
 				output: truncationResult.truncated ? truncationResult.content : fullOutput,
 				exitCode: cancelled ? undefined : code,
@@ -166,15 +168,10 @@ export function executeBash(command: string, options?: BashExecutorOptions): Pro
 		});
 
 		child.on("error", (err) => {
-			// Clean up abort listener
-			if (options?.signal) {
-				options.signal.removeEventListener("abort", abortHandler);
-			}
-
-			if (tempFileStream) {
-				tempFileStream.end();
-			}
-
+			if (settled) return;
+			settled = true;
+			signal?.removeEventListener("abort", onAbort);
+			finalize();
 			reject(err);
 		});
 	});

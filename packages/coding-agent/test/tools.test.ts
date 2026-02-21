@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { executeBash } from "../src/core/bash-executor.js";
 import { bashTool, createBashTool } from "../src/core/tools/bash.js";
 import { editTool } from "../src/core/tools/edit.js";
 import { findTool } from "../src/core/tools/find.js";
@@ -324,6 +325,65 @@ describe("Coding Agent Tools", () => {
 			const result = await bashWithoutPrefix.execute("test-prefix-3", { command: "echo no-prefix" });
 			expect(getTextOutput(result).trim()).toBe("no-prefix");
 		});
+
+		it("should settle immediately on abort without waiting for close", async () => {
+			const controller = new AbortController();
+
+			// Start a long-running command
+			const promise = bashTool.execute("test-abort-1", { command: "sleep 30" }, controller.signal);
+
+			// Give the process a moment to start
+			await new Promise((r) => setTimeout(r, 100));
+
+			// Abort and measure how long it takes to settle
+			const start = Date.now();
+			controller.abort();
+
+			await expect(promise).rejects.toThrow(/aborted/i);
+			const elapsed = Date.now() - start;
+
+			// Should settle within 1s, not wait for the 30s sleep
+			expect(elapsed).toBeLessThan(2000);
+		});
+
+		it("should settle immediately on timeout without waiting for close", async () => {
+			// Use a command that spawns a subprocess holding pipes open
+			// The shell wraps `sleep` so killing the shell group should also kill sleep,
+			// but the key thing is the promise settles immediately on timeout
+			const start = Date.now();
+
+			await expect(bashTool.execute("test-timeout-settle", { command: "sleep 30", timeout: 1 })).rejects.toThrow(
+				/timed out/i,
+			);
+
+			const elapsed = Date.now() - start;
+
+			// Should settle around 1s (the timeout), not 30s
+			expect(elapsed).toBeLessThan(3000);
+			expect(elapsed).toBeGreaterThanOrEqual(900);
+		});
+
+		it("should handle abort when signal is already aborted", async () => {
+			const controller = new AbortController();
+			controller.abort();
+
+			await expect(bashTool.execute("test-abort-pre", { command: "echo hello" }, controller.signal)).rejects.toThrow(
+				/aborted/i,
+			);
+		});
+
+		it("should not double-settle on abort followed by close", async () => {
+			const controller = new AbortController();
+
+			// Start a quick command that will naturally close
+			const promise = bashTool.execute("test-double-settle", { command: "echo done" }, controller.signal);
+
+			// Abort immediately - the command may already be finishing
+			controller.abort();
+
+			// Should reject with abort, not resolve with output
+			await expect(promise).rejects.toThrow(/aborted/i);
+		});
 	});
 
 	describe("grep tool", () => {
@@ -634,5 +694,60 @@ describe("edit tool CRLF handling", () => {
 
 		const content = readFileSync(testFile, "utf-8");
 		expect(content).toBe("\uFEFFfirst\r\nREPLACED\r\nthird\r\n");
+	});
+});
+
+describe("bash-executor", () => {
+	it("should settle immediately on abort without waiting for close", async () => {
+		const controller = new AbortController();
+
+		const promise = executeBash("sleep 30", { signal: controller.signal });
+
+		// Let the process start
+		await new Promise((r) => setTimeout(r, 100));
+
+		const start = Date.now();
+		controller.abort();
+
+		const result = await promise;
+		const elapsed = Date.now() - start;
+
+		expect(result.cancelled).toBe(true);
+		expect(result.exitCode).toBeUndefined();
+		// Should settle within 1s, not wait for the 30s sleep
+		expect(elapsed).toBeLessThan(2000);
+	});
+
+	it("should handle already-aborted signal", async () => {
+		const controller = new AbortController();
+		controller.abort();
+
+		const result = await executeBash("echo hello", { signal: controller.signal });
+
+		expect(result.cancelled).toBe(true);
+		expect(result.exitCode).toBeUndefined();
+	});
+
+	it("should resolve normally when not aborted", async () => {
+		const result = await executeBash("echo test-output");
+
+		expect(result.cancelled).toBe(false);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain("test-output");
+	});
+
+	it("should not double-settle on abort followed by close", async () => {
+		const controller = new AbortController();
+
+		// Start a quick command
+		const promise = executeBash("echo done", { signal: controller.signal });
+
+		// Abort immediately - race with natural completion
+		controller.abort();
+
+		const result = await promise;
+
+		// Should always be cancelled when abort fires
+		expect(result.cancelled).toBe(true);
 	});
 });
