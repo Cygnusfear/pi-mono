@@ -189,6 +189,9 @@ export class InteractiveMode {
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
 
+	// Chat-only mode: hide tool/bash/meta components, show only user + assistant messages
+	private chatOnlyMode = false;
+
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
 
@@ -400,6 +403,7 @@ export class InteractiveMode {
 				hint("selectModel", "to select model"),
 				hint("expandTools", "to expand tools"),
 				hint("toggleThinking", "to expand thinking"),
+				hint("toggleChatOnly", "for chat-only mode"),
 				hint("externalEditor", "for external editor"),
 				rawKeyHint("/", "for commands"),
 				rawKeyHint("!", "to run bash"),
@@ -1835,6 +1839,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("selectModel", () => this.showModelSelector());
 		this.defaultEditor.onAction("expandTools", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("toggleThinking", () => this.toggleThinkingBlockVisibility());
+		this.defaultEditor.onAction("toggleChatOnly", () => this.toggleChatOnly());
 		this.defaultEditor.onAction("externalEditor", () => this.openExternalEditor());
 		this.defaultEditor.onAction("followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("dequeue", () => this.handleDequeue());
@@ -2117,26 +2122,29 @@ export class InteractiveMode {
 					this.streamingMessage = event.message;
 					this.streamingComponent.updateContent(this.streamingMessage);
 
-					for (const content of this.streamingMessage.content) {
-						if (content.type === "toolCall") {
-							if (!this.pendingTools.has(content.id)) {
-								this.chatContainer.addChild(new Text("", 0, 0));
-								const component = new ToolExecutionComponent(
-									content.name,
-									content.arguments,
-									{
-										showImages: this.settingsManager.getShowImages(),
-									},
-									this.getRegisteredToolDefinition(content.name),
-									this.ui,
-								);
-								component.setExpanded(this.toolOutputExpanded);
-								this.chatContainer.addChild(component);
-								this.pendingTools.set(content.id, component);
-							} else {
-								const component = this.pendingTools.get(content.id);
-								if (component) {
-									component.updateArgs(content.arguments);
+					// Skip tool execution components in chat-only mode
+					if (!this.chatOnlyMode) {
+						for (const content of this.streamingMessage.content) {
+							if (content.type === "toolCall") {
+								if (!this.pendingTools.has(content.id)) {
+									this.chatContainer.addChild(new Text("", 0, 0));
+									const component = new ToolExecutionComponent(
+										content.name,
+										content.arguments,
+										{
+											showImages: this.settingsManager.getShowImages(),
+										},
+										this.getRegisteredToolDefinition(content.name),
+										this.ui,
+									);
+									component.setExpanded(this.toolOutputExpanded);
+									this.chatContainer.addChild(component);
+									this.pendingTools.set(content.id, component);
+								} else {
+									const component = this.pendingTools.get(content.id);
+									if (component) {
+										component.updateArgs(content.arguments);
+									}
 								}
 							}
 						}
@@ -2185,6 +2193,7 @@ export class InteractiveMode {
 				break;
 
 			case "tool_execution_start": {
+				if (this.chatOnlyMode) break;
 				if (!this.pendingTools.has(event.toolCallId)) {
 					const component = new ToolExecutionComponent(
 						event.toolName,
@@ -2379,6 +2388,7 @@ export class InteractiveMode {
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
 		switch (message.role) {
 			case "bashExecution": {
+				if (this.chatOnlyMode) break;
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
 				if (message.output) {
 					component.appendOutput(message.output);
@@ -2393,6 +2403,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "custom": {
+				if (this.chatOnlyMode) break;
 				if (message.display) {
 					const renderer = this.session.extensionRunner?.getMessageRenderer(message.customType);
 					const component = new CustomMessageComponent(message, renderer, this.getMarkdownThemeWithSettings());
@@ -2402,6 +2413,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "compactionSummary": {
+				if (this.chatOnlyMode) break;
 				this.chatContainer.addChild(new Spacer(1));
 				const component = new CompactionSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
 				component.setExpanded(this.toolOutputExpanded);
@@ -2409,6 +2421,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "branchSummary": {
+				if (this.chatOnlyMode) break;
 				this.chatContainer.addChild(new Spacer(1));
 				const component = new BranchSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
 				component.setExpanded(this.toolOutputExpanded);
@@ -2420,24 +2433,31 @@ export class InteractiveMode {
 				if (textContent) {
 					const skillBlock = parseSkillBlock(textContent);
 					if (skillBlock) {
-						// Render skill block (collapsible)
-						this.chatContainer.addChild(new Spacer(1));
-						const component = new SkillInvocationMessageComponent(
-							skillBlock,
-							this.getMarkdownThemeWithSettings(),
-						);
-						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
+						// Render skill block (collapsible) - skip in chat-only mode
+						if (!this.chatOnlyMode) {
+							this.chatContainer.addChild(new Spacer(1));
+							const component = new SkillInvocationMessageComponent(
+								skillBlock,
+								this.getMarkdownThemeWithSettings(),
+							);
+							component.setExpanded(this.toolOutputExpanded);
+							this.chatContainer.addChild(component);
+						}
 						// Render user message separately if present
 						if (skillBlock.userMessage) {
 							const userComponent = new UserMessageComponent(
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
+								message.timestamp,
 							);
 							this.chatContainer.addChild(userComponent);
 						}
 					} else {
-						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings());
+						const userComponent = new UserMessageComponent(
+							textContent,
+							this.getMarkdownThemeWithSettings(),
+							message.timestamp,
+						);
 						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
@@ -2486,42 +2506,46 @@ export class InteractiveMode {
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
 				this.addMessageToChat(message);
-				// Render tool call components
-				for (const content of message.content) {
-					if (content.type === "toolCall") {
-						const component = new ToolExecutionComponent(
-							content.name,
-							content.arguments,
-							{ showImages: this.settingsManager.getShowImages() },
-							this.getRegisteredToolDefinition(content.name),
-							this.ui,
-						);
-						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
+				// Render tool call components (skip in chat-only mode)
+				if (!this.chatOnlyMode) {
+					for (const content of message.content) {
+						if (content.type === "toolCall") {
+							const component = new ToolExecutionComponent(
+								content.name,
+								content.arguments,
+								{ showImages: this.settingsManager.getShowImages() },
+								this.getRegisteredToolDefinition(content.name),
+								this.ui,
+							);
+							component.setExpanded(this.toolOutputExpanded);
+							this.chatContainer.addChild(component);
 
-						if (message.stopReason === "aborted" || message.stopReason === "error") {
-							let errorMessage: string;
-							if (message.stopReason === "aborted") {
-								const retryAttempt = this.session.retryAttempt;
-								errorMessage =
-									retryAttempt > 0
-										? `Aborted after ${retryAttempt} retry attempt${retryAttempt > 1 ? "s" : ""}`
-										: "Operation aborted";
+							if (message.stopReason === "aborted" || message.stopReason === "error") {
+								let errorMessage: string;
+								if (message.stopReason === "aborted") {
+									const retryAttempt = this.session.retryAttempt;
+									errorMessage =
+										retryAttempt > 0
+											? `Aborted after ${retryAttempt} retry attempt${retryAttempt > 1 ? "s" : ""}`
+											: "Operation aborted";
+								} else {
+									errorMessage = message.errorMessage || "Error";
+								}
+								component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
 							} else {
-								errorMessage = message.errorMessage || "Error";
+								this.pendingTools.set(content.id, component);
 							}
-							component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
-						} else {
-							this.pendingTools.set(content.id, component);
 						}
 					}
 				}
 			} else if (message.role === "toolResult") {
-				// Match tool results to pending tool components
-				const component = this.pendingTools.get(message.toolCallId);
-				if (component) {
-					component.updateResult(message);
-					this.pendingTools.delete(message.toolCallId);
+				// Match tool results to pending tool components (skip in chat-only mode)
+				if (!this.chatOnlyMode) {
+					const component = this.pendingTools.get(message.toolCallId);
+					if (component) {
+						component.updateResult(message);
+						this.pendingTools.delete(message.toolCallId);
+					}
 				}
 			} else {
 				// All other messages use standard rendering
@@ -2753,6 +2777,22 @@ export class InteractiveMode {
 		}
 
 		this.showStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`);
+	}
+
+	private toggleChatOnly(): void {
+		this.chatOnlyMode = !this.chatOnlyMode;
+
+		// Rebuild chat from session messages
+		this.chatContainer.clear();
+		this.rebuildChatFromMessages();
+
+		// If streaming, re-add the streaming component
+		if (this.streamingComponent && this.streamingMessage) {
+			this.streamingComponent.updateContent(this.streamingMessage);
+			this.chatContainer.addChild(this.streamingComponent);
+		}
+
+		this.showStatus(`Chat-only mode: ${this.chatOnlyMode ? "on" : "off"}`);
 	}
 
 	private openExternalEditor(): void {
@@ -4086,6 +4126,7 @@ export class InteractiveMode {
 		const selectModel = this.getAppKeyDisplay("selectModel");
 		const expandTools = this.getAppKeyDisplay("expandTools");
 		const toggleThinking = this.getAppKeyDisplay("toggleThinking");
+		const toggleChatOnly = this.getAppKeyDisplay("toggleChatOnly");
 		const externalEditor = this.getAppKeyDisplay("externalEditor");
 		const followUp = this.getAppKeyDisplay("followUp");
 		const dequeue = this.getAppKeyDisplay("dequeue");
@@ -4128,6 +4169,7 @@ export class InteractiveMode {
 | \`${selectModel}\` | Open model selector |
 | \`${expandTools}\` | Toggle tool output expansion |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
+| \`${toggleChatOnly}\` | Toggle chat-only mode (hide tools) |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${followUp}\` | Queue follow-up message |
 | \`${dequeue}\` | Restore queued messages |

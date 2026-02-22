@@ -25,6 +25,7 @@ export type AppAction =
 	| "selectModel"
 	| "expandTools"
 	| "toggleThinking"
+	| "toggleChatOnly"
 	| "toggleSessionNamedFilter"
 	| "externalEditor"
 	| "followUp"
@@ -61,6 +62,7 @@ export const DEFAULT_APP_KEYBINDINGS: Record<AppAction, KeyId | KeyId[]> = {
 	selectModel: "ctrl+l",
 	expandTools: "ctrl+o",
 	toggleThinking: "ctrl+t",
+	toggleChatOnly: "ctrl+y",
 	toggleSessionNamedFilter: "ctrl+n",
 	externalEditor: "ctrl+g",
 	followUp: "alt+enter",
@@ -92,6 +94,7 @@ const APP_ACTIONS: AppAction[] = [
 	"selectModel",
 	"expandTools",
 	"toggleThinking",
+	"toggleChatOnly",
 	"toggleSessionNamedFilter",
 	"externalEditor",
 	"followUp",

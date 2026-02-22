@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@mariozechner/pi-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
+import { formatMessageTimestamp } from "./message-timestamp.js";
 
 /**
  * Component that renders a complete assistant message
@@ -51,8 +52,17 @@ export class AssistantMessageComponent extends Container {
 			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
 		);
 
-		if (hasVisibleContent) {
+		// Timestamp prefix: added once before the first visible content
+		let timestampAdded = false;
+		const addTimestampPrefix = () => {
+			if (timestampAdded) return;
 			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(new Text(theme.fg("dim", formatMessageTimestamp(message.timestamp)), 1, 0));
+			timestampAdded = true;
+		};
+
+		if (hasVisibleContent) {
+			addTimestampPrefix();
 		}
 
 		// Render content in order
@@ -99,15 +109,11 @@ export class AssistantMessageComponent extends Container {
 					message.errorMessage && message.errorMessage !== "Request was aborted"
 						? message.errorMessage
 						: "Operation aborted";
-				if (hasVisibleContent) {
-					this.contentContainer.addChild(new Spacer(1));
-				} else {
-					this.contentContainer.addChild(new Spacer(1));
-				}
+				addTimestampPrefix();
 				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
 			} else if (message.stopReason === "error") {
 				const errorMsg = message.errorMessage || "Unknown error";
-				this.contentContainer.addChild(new Spacer(1));
+				addTimestampPrefix();
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 1, 0));
 			}
 		}
