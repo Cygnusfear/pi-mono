@@ -1,57 +1,57 @@
 {
-	"name": "pi-monorepo",
-	"private": true,
-	"type": "module",
-	"workspaces": [
-		"packages/*",
-		"packages/web-ui/example",
-		"packages/coding-agent/examples/extensions/with-deps",
-		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
-		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
-		"packages/coding-agent/examples/extensions/custom-provider-qwen-cli"
-	],
-	"scripts": {
-		"clean": "bun run --filter '*' clean",
-		"build": "cd packages/tui && bun run build && cd ../ai && bun run build && cd ../agent && bun run build && cd ../coding-agent && bun run build && cd ../mom && bun run build && cd ../web-ui && bun run build && cd ../pods && bun run build",
-		"dev": "concurrently --names \"ai,agent,coding-agent,mom,web-ui,tui\" --prefix-colors \"cyan,yellow,red,white,green,magenta\" \"cd packages/ai && bun run dev\" \"cd packages/agent && bun run dev\" \"cd packages/coding-agent && bun run dev\" \"cd packages/mom && bun run dev\" \"cd packages/web-ui && bun run dev\" \"cd packages/tui && bun run dev\"",
-		"dev:tsc": "concurrently --names \"ai,web-ui\" --prefix-colors \"cyan,green\" \"cd packages/ai && bun run dev:tsc\" \"cd packages/web-ui && bun run dev:tsc\"",
-		"check": "biome check --write --error-on-warnings . && tsgo --noEmit && cd packages/web-ui && bun run check",
-		"test": "bun run --filter '*' test",
-		"version:patch": "npm version patch -ws --no-git-tag-version && node scripts/sync-versions.js && rm -rf node_modules packages/*/node_modules bun.lock && bun install",
-		"version:minor": "npm version minor -ws --no-git-tag-version && node scripts/sync-versions.js && rm -rf node_modules packages/*/node_modules bun.lock && bun install",
-		"version:major": "npm version major -ws --no-git-tag-version && node scripts/sync-versions.js && rm -rf node_modules packages/*/node_modules bun.lock && bun install",
-		"version:set": "npm version -ws",
-		"prepublishOnly": "bun run clean && bun run build && bun run check",
-		"publish": "bun run prepublishOnly && npm publish -ws --access public",
-		"publish:dry": "bun run prepublishOnly && npm publish -ws --access public --dry-run",
-		"release:patch": "node scripts/release.mjs patch",
-		"release:minor": "node scripts/release.mjs minor",
-		"release:major": "node scripts/release.mjs major",
-		"prepare": "husky"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "2.3.5",
-		"@types/node": "^22.10.5",
-		"@typescript/native-preview": "7.0.0-dev.20260120.1",
-		"concurrently": "^9.2.1",
-		"husky": "^9.1.7",
-		"tsx": "^4.20.3",
-		"typescript": "^5.9.2"
-	},
-	"engines": {
-		"node": ">=20.0.0"
-	},
-	"version": "0.0.3",
-	"dependencies": {
-		"@mariozechner/jiti": "^2.6.5",
-		"@mariozechner/pi-coding-agent": "^0.30.2",
-		"get-east-asian-width": "^1.4.0",
-		"koffi": "^2.15.1"
-	},
-	"overrides": {
-		"rimraf": "6.1.2",
-		"gaxios": {
-			"rimraf": "6.1.2"
-		}
-	}
+  "name": "pi-monorepo",
+  "version": "0.0.3",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "packages/web-ui/example",
+    "packages/coding-agent/examples/extensions/with-deps",
+    "packages/coding-agent/examples/extensions/custom-provider-anthropic",
+    "packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
+    "packages/coding-agent/examples/extensions/custom-provider-qwen-cli"
+  ],
+  "type": "module",
+  "scripts": {
+    "clean": "bun run --filter '*' clean",
+    "build": "cd packages/tui && bun run build && cd ../ai && bun run build && cd ../agent && bun run build && cd ../coding-agent && mkdir -p ../../dist && bun run build && bun build --compile --target=bun ./dist/cli.js --outfile ../../dist/pi && cd ../mom && bun run build && cd ../web-ui && bun run build && cd ../pods && bun run build",
+    "dev": "concurrently --names \"ai,agent,coding-agent,mom,web-ui,tui\" --prefix-colors \"cyan,yellow,red,white,green,magenta\" \"cd packages/ai && bun run dev\" \"cd packages/agent && bun run dev\" \"cd packages/coding-agent && bun run dev\" \"cd packages/mom && bun run dev\" \"cd packages/web-ui && bun run dev\" \"cd packages/tui && bun run dev\"",
+    "dev:tsc": "concurrently --names \"ai,web-ui\" --prefix-colors \"cyan,green\" \"cd packages/ai && bun run dev:tsc\" \"cd packages/web-ui && bun run dev:tsc\"",
+    "check": "biome check --write --error-on-warnings . && tsgo --noEmit && cd packages/web-ui && bun run check",
+    "test": "bun run --filter '*' test",
+    "version:patch": "npm version patch -ws --no-git-tag-version && node scripts/sync-versions.js && rm -rf node_modules packages/*/node_modules bun.lock && bun install",
+    "version:minor": "npm version minor -ws --no-git-tag-version && node scripts/sync-versions.js && rm -rf node_modules packages/*/node_modules bun.lock && bun install",
+    "version:major": "npm version major -ws --no-git-tag-version && node scripts/sync-versions.js && rm -rf node_modules packages/*/node_modules bun.lock && bun install",
+    "version:set": "npm version -ws",
+    "prepublishOnly": "bun run clean && bun run build && bun run check",
+    "publish": "bun run prepublishOnly && npm publish -ws --access public",
+    "publish:dry": "bun run prepublishOnly && npm publish -ws --access public --dry-run",
+    "release:patch": "node scripts/release.mjs patch",
+    "release:minor": "node scripts/release.mjs minor",
+    "release:major": "node scripts/release.mjs major",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "@mariozechner/jiti": "^2.6.5",
+    "@mariozechner/pi-coding-agent": "^0.30.2",
+    "get-east-asian-width": "^1.4.0",
+    "koffi": "^2.15.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.5",
+    "@types/node": "^22.10.5",
+    "@typescript/native-preview": "7.0.0-dev.20260120.1",
+    "concurrently": "^9.2.1",
+    "husky": "^9.1.7",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2"
+  },
+  "overrides": {
+    "gaxios": {
+      "rimraf": "6.1.2"
+    },
+    "rimraf": "6.1.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }
