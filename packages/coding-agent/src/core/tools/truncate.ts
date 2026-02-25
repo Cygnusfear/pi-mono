@@ -12,6 +12,10 @@ export const DEFAULT_MAX_LINES = 2000;
 export const DEFAULT_MAX_BYTES = 50 * 1024; // 50KB
 export const GREP_MAX_LINE_LENGTH = 500; // Max chars per grep match line
 
+/** Appended to code-reading tool output to trigger architectural vigilance */
+export const CODE_REVIEW_GUARD =
+	"\n\n⚠️ GUARD: If anything in this code looks architecturally suspicious, a red flag, or a code smell — IMMEDIATELY flag it to the user. Ask: can I explain why this code exists without referencing history?";
+
 export interface TruncationResult {
 	/** The truncated content */
 	content: string;
