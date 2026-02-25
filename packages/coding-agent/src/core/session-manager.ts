@@ -13,8 +13,8 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir, readFile, stat } from "fs/promises";
-import { join, resolve } from "path";
+import { readdir, readFile, stat, writeFile } from "fs/promises";
+import { basename, join, resolve } from "path";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
 import {
 	type BashExecutionMessage,
@@ -612,6 +612,74 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 
 export type SessionListProgress = (loaded: number, total: number) => void;
 
+const SESSION_INDEX_FILE = ".session-index.json";
+
+interface SessionIndexEntry {
+	mtimeMs: number;
+	info: {
+		id: string;
+		cwd: string;
+		name?: string;
+		parentSessionPath?: string;
+		created: string;
+		modified: string;
+		messageCount: number;
+		firstMessage: string;
+		allMessagesText: string;
+	};
+}
+
+type SessionIndex = Record<string, SessionIndexEntry>;
+
+function sessionInfoToIndexEntry(info: SessionInfo, mtimeMs: number): SessionIndexEntry {
+	return {
+		mtimeMs,
+		info: {
+			id: info.id,
+			cwd: info.cwd,
+			name: info.name,
+			parentSessionPath: info.parentSessionPath,
+			created: info.created.toISOString(),
+			modified: info.modified.toISOString(),
+			messageCount: info.messageCount,
+			firstMessage: info.firstMessage,
+			allMessagesText: info.allMessagesText,
+		},
+	};
+}
+
+function indexEntryToSessionInfo(filePath: string, entry: SessionIndexEntry): SessionInfo {
+	return {
+		path: filePath,
+		id: entry.info.id,
+		cwd: entry.info.cwd,
+		name: entry.info.name,
+		parentSessionPath: entry.info.parentSessionPath,
+		created: new Date(entry.info.created),
+		modified: new Date(entry.info.modified),
+		messageCount: entry.info.messageCount,
+		firstMessage: entry.info.firstMessage,
+		allMessagesText: entry.info.allMessagesText,
+	};
+}
+
+async function readSessionIndex(dir: string): Promise<SessionIndex> {
+	try {
+		const raw = await readFile(join(dir, SESSION_INDEX_FILE), "utf8");
+		return JSON.parse(raw) as SessionIndex;
+	} catch {
+		return {};
+	}
+}
+
+async function writeSessionIndex(dir: string, index: SessionIndex): Promise<void> {
+	try {
+		await writeFile(join(dir, SESSION_INDEX_FILE), JSON.stringify(index), "utf8");
+	} catch {
+		// Non-critical: index write failure just means next load is slower
+	}
+}
+
 async function listSessionsFromDir(
 	dir: string,
 	onProgress?: SessionListProgress,
@@ -628,19 +696,66 @@ async function listSessionsFromDir(
 		const files = dirEntries.filter((f) => f.endsWith(".jsonl")).map((f) => join(dir, f));
 		const total = progressTotal ?? files.length;
 
+		// Load existing index
+		const index = await readSessionIndex(dir);
+		const newIndex: SessionIndex = {};
 		let loaded = 0;
-		const results = await Promise.all(
+		let indexDirty = false;
+
+		// Stat all files concurrently
+		const fileStats = await Promise.all(
 			files.map(async (file) => {
-				const info = await buildSessionInfo(file);
-				loaded++;
-				onProgress?.(progressOffset + loaded, total);
-				return info;
+				const s = await stat(file);
+				return { file, mtimeMs: s.mtimeMs };
 			}),
 		);
-		for (const info of results) {
-			if (info) {
-				sessions.push(info);
+
+		// Build list of files needing full parse vs cache hits
+		const needsParse: { file: string; mtimeMs: number }[] = [];
+		for (const { file, mtimeMs } of fileStats) {
+			const key = basename(file);
+			const cached = index[key];
+			if (cached && cached.mtimeMs === mtimeMs) {
+				// Cache hit
+				newIndex[key] = cached;
+				sessions.push(indexEntryToSessionInfo(file, cached));
+				loaded++;
+				onProgress?.(progressOffset + loaded, total);
+			} else {
+				needsParse.push({ file, mtimeMs });
 			}
+		}
+
+		// Parse only changed/new files (with concurrency limit)
+		const CONCURRENCY = 10;
+		for (let i = 0; i < needsParse.length; i += CONCURRENCY) {
+			const batch = needsParse.slice(i, i + CONCURRENCY);
+			const results = await Promise.all(
+				batch.map(async ({ file, mtimeMs }) => {
+					const info = await buildSessionInfo(file);
+					loaded++;
+					onProgress?.(progressOffset + loaded, total);
+					return { file, mtimeMs, info };
+				}),
+			);
+			for (const { file, mtimeMs, info } of results) {
+				if (info) {
+					const key = basename(file);
+					newIndex[key] = sessionInfoToIndexEntry(info, mtimeMs);
+					sessions.push(info);
+					indexDirty = true;
+				}
+			}
+		}
+
+		// Detect removed files (keys in old index not in new)
+		if (Object.keys(index).length !== Object.keys(newIndex).length) {
+			indexDirty = true;
+		}
+
+		// Write index back if anything changed
+		if (indexDirty) {
+			await writeSessionIndex(dir, newIndex);
 		}
 	} catch {
 		// Return empty list on error
@@ -1361,35 +1476,24 @@ export class SessionManager {
 
 			// Count total files first for accurate progress
 			let totalFiles = 0;
-			const dirFiles: string[][] = [];
+			const dirFileCounts: number[] = [];
 			for (const dir of dirs) {
 				try {
 					const files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl"));
-					dirFiles.push(files.map((f) => join(dir, f)));
+					dirFileCounts.push(files.length);
 					totalFiles += files.length;
 				} catch {
-					dirFiles.push([]);
+					dirFileCounts.push(0);
 				}
 			}
 
-			// Process all files with progress tracking
-			let loaded = 0;
+			// Process each directory using the indexed loader
 			const sessions: SessionInfo[] = [];
-			const allFiles = dirFiles.flat();
-
-			const results = await Promise.all(
-				allFiles.map(async (file) => {
-					const info = await buildSessionInfo(file);
-					loaded++;
-					onProgress?.(loaded, totalFiles);
-					return info;
-				}),
-			);
-
-			for (const info of results) {
-				if (info) {
-					sessions.push(info);
-				}
+			let progressOffset = 0;
+			for (let i = 0; i < dirs.length; i++) {
+				const dirSessions = await listSessionsFromDir(dirs[i]!, onProgress, progressOffset, totalFiles);
+				sessions.push(...dirSessions);
+				progressOffset += dirFileCounts[i]!;
 			}
 
 			sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
