@@ -84,8 +84,8 @@ fi
 # --- build ---
 backup_dist
 echo "==> Building..."
-# Clean lockfile to avoid bun's "Duplicate package path" error on stale lockfiles
-rm -f bun.lock
+# Clean lockfiles: bun.lock gets stale after rebase, package-lock.json is npm's and confuses bun
+rm -f bun.lock package-lock.json
 bun install
 build_log=$(bun run build 2>&1) || {
     echo "$build_log"
