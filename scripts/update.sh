@@ -19,6 +19,27 @@ pi_fix() {
     fi
 }
 
+# Back up dist/ so pi remains runnable if the build breaks
+backup_dist() {
+    if [[ -d dist ]]; then
+        echo "==> Backing up dist/..."
+        rm -rf dist.bak
+        cp -R dist dist.bak
+    fi
+}
+
+restore_dist() {
+    if [[ -d dist.bak ]]; then
+        echo "==> Restoring dist/ from backup..."
+        rm -rf dist
+        mv dist.bak dist
+    fi
+}
+
+cleanup_dist_backup() {
+    rm -rf dist.bak
+}
+
 # --- stash ---
 echo "==> Stashing local changes..."
 stash_result=$(git stash 2>&1)
@@ -61,10 +82,12 @@ else
 fi
 
 # --- build ---
+backup_dist
 echo "==> Building..."
 bun install
 build_log=$(bun run build 2>&1) || {
     echo "$build_log"
+    restore_dist
     pi_fix \
         "The build failed with these errors:"$'\n\n'"${build_log}"$'\n\n'"Fix the build errors. Run 'bun run build' to verify your fix works. Do NOT remove functionality -- fix the actual issue (missing deps, type errors, etc)." \
         "Build is broken. Fix it. Run 'bun run build' to verify. The previous one-shot attempt did not resolve it."
@@ -78,5 +101,6 @@ build_log=$(bun run build 2>&1) || {
 }
 echo "$build_log"
 
+cleanup_dist_backup
 restore_stash
 echo "==> Done."
