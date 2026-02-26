@@ -60,7 +60,7 @@ restore_stash() {
 
 # --- rebase ---
 echo "==> Fetching upstream..."
-git fetch upstream
+git fetch upstream --no-tags --quiet
 
 if git merge-base --is-ancestor upstream/main HEAD; then
     echo "==> Already up to date with upstream/main."
@@ -84,6 +84,8 @@ fi
 # --- build ---
 backup_dist
 echo "==> Building..."
+# Clean lockfile to avoid bun's "Duplicate package path" error on stale lockfiles
+rm -f bun.lock
 bun install
 build_log=$(bun run build 2>&1) || {
     echo "$build_log"
