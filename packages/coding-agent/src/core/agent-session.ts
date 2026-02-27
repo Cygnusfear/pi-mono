@@ -2054,6 +2054,8 @@ export class AgentSession {
 		await this._extensionRunner?.emit({ type: "session_shutdown" });
 		this.settingsManager.reload();
 		resetApiProviders();
+		this._modelRegistry.authStorage.reload();
+		this._modelRegistry.refresh();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),
