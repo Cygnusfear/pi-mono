@@ -95,6 +95,7 @@ export function serializeConversation(messages: Message[]): string {
 
 	for (const msg of messages) {
 		if (msg.role === "user") {
+			if (!msg.content) continue;
 			const content =
 				typeof msg.content === "string"
 					? msg.content
@@ -104,6 +105,7 @@ export function serializeConversation(messages: Message[]): string {
 							.join("");
 			if (content) parts.push(`[User]: ${content}`);
 		} else if (msg.role === "assistant") {
+			if (!msg.content) continue;
 			const textParts: string[] = [];
 			const thinkingParts: string[] = [];
 			const toolCalls: string[] = [];
@@ -132,6 +134,7 @@ export function serializeConversation(messages: Message[]): string {
 				parts.push(`[Assistant tool calls]: ${toolCalls.join("; ")}`);
 			}
 		} else if (msg.role === "toolResult") {
+			if (!msg.content) continue;
 			const content = msg.content
 				.filter((c): c is { type: "text"; text: string } => c.type === "text")
 				.map((c) => c.text)

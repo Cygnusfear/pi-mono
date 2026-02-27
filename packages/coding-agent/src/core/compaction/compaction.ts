@@ -223,6 +223,14 @@ export function shouldCompact(contextTokens: number, contextWindow: number, sett
  * This is conservative (overestimates tokens).
  */
 export function estimateTokens(message: AgentMessage): number {
+	try {
+		return estimateTokensUnsafe(message);
+	} catch {
+		return 0;
+	}
+}
+
+function estimateTokensUnsafe(message: AgentMessage): number {
 	let chars = 0;
 
 	switch (message.role) {
